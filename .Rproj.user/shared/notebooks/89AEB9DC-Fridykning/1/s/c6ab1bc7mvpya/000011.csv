@@ -1,0 +1,5 @@
+"0","#Use ""parallel"" function to find a suitable number of factors, based on the assumption that the variance explained in real factors should be higher than factors obtained using a random shuffle of the data.
+parallel <- fa.parallel(fd, fm = 'minres', fa = 'fa',sim=FALSE)
+"
+"2","Error in cor(x, use = use) : »x« skal være numerisk
+"

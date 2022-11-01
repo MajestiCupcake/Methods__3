@@ -1,0 +1,6 @@
+"0","library(bayesplot)"
+"0","pop1 <- pp_check(mlu1p1fit, ndraws = 100)+labs(title='Model 1')"
+"0","pop2 <- pp_check(mlu2p2fit, ndraws = 100)+labs(title='Model 2')"
+"0","pop3 <- pp_check(mlu3p3fit, ndraws = 100)+labs(title='Model 3')"
+"0",""
+"0","pop_all <- gridExtra::grid.arrange(pop1,pop2,pop3)"

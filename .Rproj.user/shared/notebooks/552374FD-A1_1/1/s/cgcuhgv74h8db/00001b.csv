@@ -1,0 +1,4 @@
+"0","loo::loo_compare(x=list(loo1))#,loo2,loo3))
+"
+"2","Error: 'loo_compare' requires at least two models.
+"

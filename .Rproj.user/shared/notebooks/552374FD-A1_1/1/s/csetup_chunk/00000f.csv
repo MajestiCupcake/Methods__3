@@ -1,0 +1,17 @@
+"0","knitr::opts_chunk$set(echo = TRUE)"
+"2","Warning messages:
+"
+"2","1: replacing previous import ‘ggplot2::vars’ by ‘dplyr::vars’ when loading ‘bayesplot’ 
+"
+"2","2: replacing previous import ‘bayesplot::vars’ by ‘ggplot2::vars’ when loading ‘shinystan’ 
+"
+"0","setwd('.')"
+"0",""
+"0","# pacman::p_load(brms, tidyverse, ggplot2)"
+"0",""
+"0","df <- read.csv('data_clean.csv')"
+"0",""
+"0","#plot"
+"0","# hist(df$CHI_MLU)"
+"0","#check normality"
+"0","#shapiro.test(df$CHI_MLU)"

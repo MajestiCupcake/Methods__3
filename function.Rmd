@@ -1,0 +1,107 @@
+---
+title: "Untitled"
+author: "Sara"
+date: "2022-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load(tidyverse,
+               janitor,
+               dplyr,
+               plyr)
+setwd('.')
+#function
+cleaning.data <- function(dfs){
+  list <- list("demo_train.csv", "LU_train.csv") #making it a list
+
+  df_list <- list()#making an empty list
+  for (i in 1:length(list)){ #loading data loop
+      df_work <- read.csv(list[i])#read into individual dataframes
+      df_list[[i]] <- assign(paste0(i,"df"), df_work) #trying to save dataframe name under a new name in list
+  }
+  
+  clean_list <- list()
+  for (i in 1:length(df_list)){ # cleaning loop
+    colnames(df_list[i])[1] <- 'CHILDID'#rename coulmn one to childid                           
+    colnames(df_list[i])[2] <- 'VISIT'#rename column two to visit
+    df_list[i]$CHILDID <- gsub("[?.;!¡¿·']", "", df_list[i]$CHILDID)#remove weird characters from UD
+    df_list[i]$VISIT <- str_extract(df_list[i]$VISIT, "\\d")#recode visit til numeric
+    df_list[i] <- df_list[i] %>% 
+      mutate_if(is.character,str_to_upper) %>% #all characters to upper
+      mutate(Gender=recode(Gender,"1"="MALE","2"="FEMALE")) %>% #recode gender
+      mutate(Diagnosis=recode(Diagnosis,"A"="ASD","B"="TD"))#recode diagnosis
+    clean_list[[i]] <- assign(paste0("df", i), df_list[i]) #trying to save dataframe name under a new name in list
+  }
+    
+  merge_all <- join_all(clean_list,by=c("CHILDID","VISIT"))#merge clean dataframes
+  merge_all <<- merge_all #check if all the data is there
+    
+  #creating subset
+  subset <- subset(merge_all,select= c("CHILDID",
+                                       "VISIT",
+                                       "Diagnosis",
+                                       "Ethnicity",
+                                       "Gender",
+                                       "Age",
+                                       "ADOS",
+                                       "MullenRaw",
+                                       "ExpressiveLangRaw",
+                                       "Socialization",
+                                       "MOT_MLU",
+                                       "CHI_MLU",
+                                       "types_MOT",
+                                       "types_CHI",
+                                       "tokens_MOT",
+                                       "tokens_CHI"
+                                       )
+                   )
+  #making subset for visit 1 variables
+  df1 <- subset(subset, VISIT==1, select = c('SUBJ',
+                                             'ADOS',
+                                             'MullenRaw',
+                                             'ExpressiveLangRaw',
+                                             'Socialization'
+                                             )
+              )
+  #renaming columns for visit 1
+  df1 <- df1 %>% 
+    rename('ADOS1'='ADOS') %>% 
+    rename('MullenRaw1'='MullenRaw') %>% 
+    rename('ExpressiveLangRaw1'='ExpressiveLangRaw') %>% 
+    rename('Socialization1'='Socialization')
+  
+  #merging with entire dataset
+  df <- merge(merge_all,df1,by=c("CHILDID"),all=TRUE)
+
+  #Anonymise
+  df$CHILDID <- as.factor(df$CHILDID)#levels 
+  df$CHILDID <- as.numeric(df$CHILDID)#assigning the level by overwriting the id.
+  df$CHILDID <- as.factor(df$CHILDID)
+
+  #last step, save file
+  df_final <<- df#save to environment
+  write.csv(df,"Complete_dataset.csv",row.names = FALSE)#save to working directory
+  
+}
+
+cleaning.data(demo_train, LU_train)
+```
+```{r}
+a <- data.frame(x = 1:3, y = 4:6)
+# make a list of several dataframes, then apply function (change column names, e.g.):
+my.list <- list(a, a)
+my.list <- lapply(my.list, function(x) {names(x) <- c("CHILDID", "VISIT") ; return(x)})
+# save dfs to csv with similar lapply-call:
+n <- 1:length(my.list)
+lapply(n, function(ni) {
+               write.table(file = paste(ni, ".csv", sep = ""), 
+               my.list[ni], sep = ";", row.names = F)
+               }
+       )
+```
+

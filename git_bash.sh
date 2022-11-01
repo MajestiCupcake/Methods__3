@@ -4,7 +4,7 @@
 
 #Enter remote repo path.
 #echo "type remote repository name: "; read -a remote_git_repo
-remote_git_repo="https://github.com/MajestiCupcake/methods-3.git"
+remote_git_repo="https://github.com/MajestiCupcake/Methods__3.git"
 
 
 #Split strings.

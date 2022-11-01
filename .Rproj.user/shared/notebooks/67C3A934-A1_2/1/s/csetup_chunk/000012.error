@@ -1,0 +1,1 @@
+{"frames":[{"func":"library(tidyverse, ggplot2, gridExtra, bayesplot, brms)","file":"","line_number":0,"end_line_number":0,"character_number":0,"end_character_number":0}],"message":"Error in library(tidyverse, ggplot2, gridExtra, bayesplot, brms) : \n  object 'bayesplot' not found\n"}

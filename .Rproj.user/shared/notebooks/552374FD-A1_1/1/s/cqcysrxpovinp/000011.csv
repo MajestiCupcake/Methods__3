@@ -1,0 +1,6 @@
+"0","#pp checking the priors - could look better, but fine i guess"
+"0","pp1 <- pp_check(mlu1p1, ndraws = 100)+labs(title='model 1')"
+"0","pp2 <- pp_check(mlu2p2, ndraws = 100)+labs(title='model 2')"
+"0","pp3 <- pp_check(mlu3p3, ndraws = 100)+labs(title='model 3')"
+"0",""
+"0","pp_all <- gridExtra::grid.arrange(pp1,pp2,pp3)"
