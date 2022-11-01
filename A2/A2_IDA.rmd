@@ -1,0 +1,546 @@
+---
+title: "Assignment 2 - Meta-analysis of pitch in schizophrenia"
+author: "Sabrina Zaki Hansen"
+date: "16/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,tidybayes,brms,ggplot2,bayesplot,rstan,gridExtra,grid,dplyr,cmdstanr,msm,metafor)
+```
+
+# Assignment 2: meta-analysis
+
+## Questions to be answered
+
+1. Simulate data to setup the analysis and gain insight on the structure of the problem. Simulate one dataset of 100 studies (n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect size of 0.4, average deviation by study of .4 and measurement error of .8. The data you get should have one row per study, with an effect size mean and standard error. Build a proper bayesian model to analyze the simulated data. Then simulate publication bias (only some of the studies you simulate are likely to be published, which?), the effect of publication bias on your estimates (re-run the model on published studies, assess the difference), and discuss what this implies for your model. remember to use at least one plot to visualize your results. 
+BONUS question: do a power/precision analysis: w this kind of sample sizes (participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
+
+
+# Question 1
+
+
+Simulate one dataset of 100 studies
+(n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants),
+
+with a mean effect size of 0.4,
+average deviation by study of .4
+and measurement error of .8.
+
+```{r}
+# Simulating the data
+set.seed(938)
+Studies <- 100
+
+# Setting our parameters
+EffectMean <- 0.4
+StudySD <- 0.4
+Error <- 0.8
+
+
+# Participant variables
+mean_participants <- 20
+sd_participants <- 10
+
+# Define the dataframe 
+d <- tibble(
+  Study=seq(Studies),
+  Participants = round(rtnorm(Studies,mean_participants,sd_participants,lower=10)),
+  Study_effect = rnorm(Studies,EffectMean,StudySD),
+  Mean=NA,
+  Standard_error = NA,
+  PublishedPOS = NA)
+
+
+# A for loop that simulates effect size, mean and standard error for each study (row)
+for (i in seq(d$Study)){
+  sampling <- rnorm(d$Participants[i],d$Study_effect[i],Error)
+  d$Mean[i] <- mean(sampling)
+  d$Standard_error[i] <- sd(sampling)/sqrt(d$Participants[i])
+  d$PublishedPOS[i] <- ifelse(
+    abs(d$Mean[i]) - (2*d$Standard_error[i]) > 0 & d$Mean[i]> 0, rbinom(1,1,.9), rbinom(1,1,.1)
+  )
+}
+
+# P-hacking - adding 3 outragous outlies
+index <- d$Study + 1
+d[index:(index + 2),] <- NA
+d$Study[index:(index+2)] <- c(index:(index + 2))
+d$Participants[index:(index+2)] <- c(25,30,27)
+d$Study_effect[index:(index+2)] <- EffectMean
+d$Mean[index:(index+2)] <- c(2.5,3,2.7)
+d$Standard_error[index:(index+2)] <- 1
+d$PublishedPOS[index:(index+2)] <- 1
+
+# A plot of the simulation
+ggplot(d) +
+  aes(x = Mean) +
+  geom_histogram(bins = 30L, fill = "#4682B4") +
+  labs(title = "Effect mean of the studies, all studies") +
+  geom_vline(xintercept = 0, color="black") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 18L, face = "bold"))
+
+# Subset with only the published studies
+d_pub <- d %>% 
+  subset(PublishedPOS=="1")
+
+# A plot of the simulation
+ggplot(d_pub) +
+  aes(x = Mean) +
+  geom_histogram(bins = 30L, fill = "#4682B4") +
+  labs(title = "Effect mean of the studies, published studies") +
+  geom_vline(xintercept = 0, color="black") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 18L, face = "bold"))
+```
+
+```{r}
+# Setting the formula
+Study_f <- bf(Study_effect | se(Standard_error) ~ 1 + (1 | Study))
+
+# Getting priors
+get_prior(Study_f,d,gaussian)
+
+# Setting priors
+Study_p <- c(
+  prior(normal(0,0.3),class=Intercept),
+  prior(normal(0,0.2),class=sd))
+```
+
+```{r}
+# Running the model
+Study_prior_all <- brm(
+  Study_f,
+  d,
+  family = gaussian,
+  prior = Study_p,
+  sample_prior="only",
+  backend = "cmdstanr",
+  chains = 2,
+  cores = 2,
+  control = list(
+    adapt_delta = 0.99,
+    max_treedepth = 20),
+  stan_model_args=list(stanc_options = list("O1"))
+)
+
+Study_prior_pub <- brm(
+  Study_f,
+  d_pub,
+  family = gaussian,
+  prior = Study_p,
+  sample_prior="only",
+  backend = "cmdstanr",
+  chains = 2,
+  cores = 2,
+  control = list(
+    adapt_delta = 0.99,
+    max_treedepth = 20),
+  stan_model_args=list(stanc_options = list("O1"))
+)
+
+StudyPPC_all <- pp_check(Study_prior_all, ndraws = 100) + labs(title="Prior predictive checks, all")
+StudyPPC_pub <- pp_check(Study_prior_pub, ndraws = 100) + labs(title="Prior predictive checks, published")
+grid.arrange(StudyPPC_all, StudyPPC_pub)
+```
+
+## Models with priors on the actual data
+```{r}
+Study_fit_all <-
+  brm(
+    Study_f,
+    data = d,
+    save_pars = save_pars(all = TRUE),
+    family = gaussian,
+    prior = Study_p,
+    file = "Study_fit_all",
+    #refit = "on_change",
+    sample_prior = T,
+    iter = 1000, 
+    warmup = 100,
+    cores = 2,
+    chains = 2,
+    backend = "cmdstanr",
+    threads = threading(4),
+    control = list(
+      adapt_delta = 0.99,
+      max_treedepth = 15 ),
+    stan_model_args=list(stanc_options = list("O1"))
+  )
+
+
+
+
+```
+
+```{r}
+# Updating the models
+Study_update_all <- update(Study_fit_all)
+Study_update_pub <- update(Study_fit_all,newdata=subset(d,PublishedPOS==1))
+
+p1 <- pp_check(Study_update_all, ndraws = 100) + labs(title="Posterior predictive check, all")  + xlim(-5, 5)
+p2 <- pp_check(Study_update_pub, ndraws = 100) + labs(title="Posterior predictive check, published")  + xlim(-5, 5)
+
+grid.arrange(p1, p2)
+```
+
+
+```{r}
+posterior_all = as_draws_df(Study_update_all)
+posterior_pub = as_draws_df(Study_update_pub)
+
+p_a_intercept <- ggplot(posterior_all) +
+  geom_density(aes(b_Intercept),fill="blue", alpha=0.3) +
+  geom_density(aes(prior_Intercept), fill="red", alpha=0.3) +
+  geom_vline(xintercept = 0.4) +
+  labs(title = "Intercept, all")
+
+p_p_intercept <-ggplot(posterior_pub) +
+  geom_density(aes(b_Intercept),fill="blue", alpha=0.3) +
+  geom_density(aes(prior_Intercept), fill="red", alpha=0.3) +
+  geom_vline(xintercept = 0.4) +
+  labs(title = "Intercept, published")
+
+p_a_sd <-ggplot(posterior_all) +
+  geom_density(aes(sd_Study__Intercept), fill="blue", alpha=0.3) +
+  geom_density(aes(prior_sd_Study), fill="red", alpha=0.3) +
+  labs(title = "SD, all") +
+  geom_vline(xintercept = 0.4)
+
+p_p_sd <-ggplot(posterior_pub) +
+  geom_density(aes(sd_Study__Intercept), fill="blue", alpha=0.3) +
+  geom_density(aes(prior_sd_Study), fill="red", alpha=0.3) +
+  labs(title = "SD, published") +
+  geom_vline(xintercept = 0.4)
+
+grid.arrange(p_a_intercept,p_p_intercept,p_a_sd,p_p_sd)
+```
+
+```{r}
+
+
+
+#loo comparison (leave-one-out cross validation)
+#loo_all <- add_criterion(Study_update_all, criterion = "loo")
+#loo_pub <- add_criterion(Study_update_pub, criterion = "loo")
+
+#loo_pub
+#loo_compare(loo_all, loo_pub)
+#The negative difference indicates that the first model (estimating mu) is better, from our posterior distribution for mu.
+
+#d$loo_all <- MLU_m3$criteria$loo$pointwise[,"looic"]
+#d$loo_pub <- MLU_m2$criteria$loo$pointwise[,"looic"]
+
+
+```
+
+2. What is the current evidence for distinctive vocal patterns in schizophrenia? 
+Use the data from Parola et al (2020) - https://www.dropbox.com/s/0l9ur0gaabr80a8/Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx?dl=0 - focusing on pitch variability (PITCH_F0SD).  Describe the data available (studies, participants). Using the model from question 1 analyze the data, visualize and report the findings: population level effect size; how well studies reflect it; influential studies, publication bias. 
+BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
+
+
+## Question 2
+
+```{r}
+library(readxl)
+Matrix_MetaAnalysis<- read_excel("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+view(Matrix_MetaAnalysis)
+
+```
+
+```{r}
+#focusing on pitch variability (PITCH_F0SD)
+
+?escalc
+```
+
+
+```{r}
+
+#### D and SE
+glimpse(Matrix_MetaAnalysis)
+
+#calculate effect size as cohens d (D) and sampling variances (SE)
+pacman::p_load("metafor")
+PitchVari<-escalc("SMD",
+                  n1i=SAMPLE_SIZE_SZ, n2i=SAMPLE_SIZE_HC,
+                  m1i=PITCH_F0SD_SZ_M,
+                  m2i=PITCH_F0SD_HC_M,
+                  sd1i=PITCH_F0SD_SZ_SD,
+                  sd2i=PITCH_F0SD_HC_SD,
+                  data = Matrix_MetaAnalysis)
+
+glimpse(PitchVari)
+
+#make a dataframe that only focuses on the the pitch variability PITCH_F0SD
+PitchMeta <- PitchVari %>% 
+  select(Article, SAMPLE_SIZE_SZ, SAMPLE_SIZE_HC, PITCH_F0SD_SZ_M, PITCH_F0SD_HC_M, PITCH_F0SD_SZ_SD, PITCH_F0SD_HC_SD, yi, vi, Authors)
+PitchMeta <- PitchMeta %>% 
+  rename("StudyEffect" = yi, "ObservedSigma" = vi)
+
+glimpse(PitchMeta)
+
+
+#sample size, mean (Y), sd (Y) for begge vores forsøgsgrupper (XX) for variablen PITCH_F0SD_XX_Y
+
+#yi is the StudyEffect and vi is the ObservedSigma
+
+```
+
+```{r}
+
+# Setting the formula
+Study <- bf(StudyEffect | se(ObservedSigma) ~ 1 + (1 | Article))
+
+
+# Getting priors
+get_prior(Study_real, PitchMeta, gaussian)
+
+
+
+# Setting priors
+prior <- c(
+  prior(normal(0,0.3),class=Intercept),
+  prior(normal(0,0.2),class=sd))
+
+    
+```
+
+
+```{r}
+
+# Running the model
+Study_prior_real <- brm(
+  Study,
+  PitchMeta,
+  family = gaussian,
+  prior = prior,
+  sample_prior="only",
+  backend = "cmdstanr",
+  chains = 2,
+  cores = 2,
+  control = list(
+    adapt_delta = 0.99,
+    max_treedepth = 20),
+  stan_model_args=list(stanc_options = list("O1"))
+)
+
+
+#pp check
+StudyPPC_real <- pp_check(Study_prior_real, ndraws = 100) + labs(title="Prior predictive checks, real")
+
+StudyPPC_real
+
+```
+
+```{r}
+Study_fit_real <-
+  brm(
+    Study,
+    data = PitchMeta,
+    save_pars = save_pars(all = TRUE),
+    family = gaussian,
+    prior = prior,
+    #refit = "on_change",
+    sample_prior = T,
+    iter = 1000, 
+    warmup = 100,
+    cores = 2,
+    chains = 2,
+    backend = "cmdstanr",
+    threads = threading(4),
+    control = list(
+      adapt_delta = 0.99,
+      max_treedepth = 15 ),
+    stan_model_args=list(stanc_options = list("O1"))
+  )
+    
+```
+
+```{r}
+# Updating the models
+Study_update_real <- update(Study_fit_real)
+
+pp_check(Study_update_real, ndraws = 100) + labs(title="Posterior predictive check, real")  + xlim(-5, 5)
+
+```
+```{r}
+
+
+```
+
+```{r}
+
+posterior_real = as_draws_df(Study_update_real)
+
+posterior_real
+
+p_a_intercept <- ggplot(posterior_real) +
+  geom_density(aes(b_Intercept),fill="blue", alpha=0.3) +
+  geom_density(aes(prior_Intercept), fill="red", alpha=0.3) +
+  geom_vline(xintercept = 0.4) +
+  labs(title = "Intercept, all")
+
+
+p_a_sd <-ggplot(posterior_real) +
+  geom_density(aes(sd_Study__Intercept), fill="blue", alpha=0.3) +
+  geom_density(aes(prior_sd_Study), fill="red", alpha=0.3) +
+  labs(title = "SD, all") +
+  geom_vline(xintercept = 0.4)
+
+
+grid.arrange(p_a_intercept,p_a_sd)
+
+```
+
+```{r}
+
+Study_update_real
+
+#Population-Level Effects: Estimate = -0.12 (pooled effect size)
+
+
+
+```
+
+```{r}
+
+#uncertainty of the slopw
+
+
+as_draws_df(Study_update_real)
+
+```
+
+```{r}
+
+
+
+#extract the estimated deviation of each study’s “true” effect size from the pooled effect
+
+ranef(Study_fit_real)
+
+
+```
+
+
+```{r}
+post.samples <- posterior_samples(Study_update_real, c("^b", "^sd"))
+names(post.samples)
+
+names(post.samples) <- c("smd", "tau")
+
+```
+
+
+```{r}
+p3 <- ggplot(aes(x = smd), data = post.samples) +
+  geom_density(fill = "lightblue",                # set the color
+               color = "lightblue", alpha = 0.7) +  
+  geom_point(y = 0,                               # add point at mean
+             x = mean(post.samples$smd)) +
+  labs(x = expression(italic(SMD)),
+       y = element_blank()) +
+  theme_minimal()
+
+p4 <- ggplot(aes(x = tau), data = post.samples) +
+  geom_density(fill = "lightgreen",               # set the color
+               color = "lightgreen", alpha = 0.7) +  
+  geom_point(y = 0, 
+             x = mean(post.samples$tau)) +        # add point at mean
+    labs(x = expression(tau),
+       y = element_blank()) +
+  theme_minimal()
+
+grid.arrange(p3, p4)
+
+```
+
+
+```{r}
+
+smd.ecdf <- ecdf(post.samples$smd)
+smd.ecdf(0.3)
+
+#We see that with 0%, the probability of our pooled effect being smaller than 0.30 is very, very low. Assuming the cut-off is valid, this would mean that the overall effect of the intervention we find in this meta-analysis is very likely to be meaningful.
+
+```
+
+```{r}
+
+library(tidybayes)
+library(dplyr)
+library(ggplot2)
+library(ggridges)
+library(glue)
+library(stringr)
+library(forcats)
+
+```
+
+
+```{r}
+####forrest plot
+
+```
+
+
+```{r}
+
+study.draws <- spread_draws(Study_fit_real, r_Article[Article,], b_Intercept) %>% 
+  mutate(b_Intercept = r_Article + b_Intercept)
+
+pooled.effect.draws <- spread_draws(Study_fit_real, b_Intercept) %>% 
+  mutate(Article = "Pooled Effect")
+
+forest.data <- bind_rows(study.draws, 
+                         pooled.effect.draws) %>% 
+   ungroup() %>%
+   mutate(Article = str_replace_all(Article, "[.]", " ")) %>% 
+   mutate(Article = reorder(Article, b_Intercept))
+
+
+forest.data.summary <- group_by(forest.data, Article) %>% 
+  mean_qi(b_Intercept)
+  
+
+
+```
+
+
+```{r}
+
+ggplot(aes(b_Intercept, 
+           relevel(Article, "Pooled Effect", 
+                   after = Inf)), 
+       data = forest.data) +
+  
+  # Add vertical lines for pooled effect and CI
+  geom_vline(xintercept = fixef(Study_fit_real)[1, 1], 
+             color = "grey", size = 1) +
+  geom_vline(xintercept = fixef(Study_fit_real)[1, 3:4], 
+             color = "grey", linetype = 2) +
+  geom_vline(xintercept = 0, color = "black", 
+             size = 1) +
+  
+  # Add densities
+  geom_density_ridges(fill = "blue", 
+                      rel_min_height = 0.01, 
+                      col = NA, scale = 1,
+                      alpha = 0.8) +
+  geom_pointintervalh(data = forest.data.summary, 
+                      size = 1) +
+  
+  # Add text and labels
+  geom_text(data = mutate_if(forest.data.summary, 
+                             is.numeric, round, 2),
+    aes(label = glue("{b_Intercept} [{.lower}, {.upper}]"), 
+        x = Inf), hjust = "inward") +
+  labs(x = "Standardized Mean Difference", # summary measure
+       y = element_blank()) +
+  theme_minimal()
+
+```
+

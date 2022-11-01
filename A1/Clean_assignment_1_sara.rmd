@@ -1,0 +1,408 @@
+---
+title: "Untitled"
+author: "Maria Olsen"
+date: "2022-10-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,brms)
+```
+
+#The workflow (from Riccardo)
+
+- define the formula
+- define the prior
+- prior predictive checks
+- fit the model
+- model quality checks: traceplots, divergences, rhat, effective samples #presition analysis
+- model quality checks: posterior predictive checks, prior-posterior update checks
+- model comparison #cross validation
+
+#Simulating data
+```{r}
+set.seed(1912)
+
+#Defining parameters 
+n <- 30 #set to 50?
+mu_asd <- log(1.5)
+sigma_asd <- log(1.5)-log(1.5-0.5)
+mu_td <- log(1.5)
+sigma_td <- log(1.5)-log(1.5-0.3)
+
+mu_visit_asd <- 0.15  
+sigma_visit_asd <-  0.1 
+
+mu_visit_td <-  0.20 
+sigma_visit_td <- 0.08  
+
+visit <- 6
+error <- 0.2
+
+#Making a function for simulating data
+s_d <- function(n, visit, mu_asd, mu_td, sigma_asd, sigma_td, error){
+  s_df <- tibble(expand.grid(ID=seq(n),
+                             Diag= c("ASD", "TD"),
+                             Visit = seq(visit))) %>%  
+    mutate(ID = ifelse(Diag == "TD", ID + (n*2), ID), 
+           IndividualIntercept = NA, 
+           IndividualSlope = NA, 
+           MLU = NA)
+  
+  for (i in seq(s_df$ID)) {
+    #Assigning individual intercept
+    s_df$IndividualIntercept[s_df$ID == i & s_df$Diag == "ASD"] <- rnorm(1, mu_asd, sigma_asd)
+    s_df$IndividualIntercept[s_df$ID == i & s_df$Diag == "TD"] <- rnorm(1, mu_td, sigma_td)
+    
+    #Assigning individual slope
+    s_df$IndividualSlope[s_df$ID == i & s_df$Diag == "ASD"] <- rnorm(1, mu_visit_asd, sigma_visit_asd)
+    s_df$IndividualSlope[s_df$ID == i & s_df$Diag == "TD"] <- rnorm(1, mu_visit_td, sigma_visit_td)
+  }
+  
+  for (i in seq(nrow(s_df))){
+  s_df$MLU[i] <- exp(rnorm(1, (s_df$IndividualIntercept[i] + s_df$IndividualSlope[i] * (s_df$Visit[i]-1)), error))
+                  }
+  
+  
+  
+  return(s_df)
+}
+
+d <- s_d(n, visit, mu_asd, mu_td, sigma_asd, sigma_td, error)
+
+#Visualizing data
+ggplot(d, aes(Visit, MLU, color = Diag, group = ID)) + 
+  theme_bw() + 
+  geom_point() + 
+  geom_line(alpha = 0.3)
+
+```
+
+
+#Defining the formula
+```{r}
+#Intercepts only model
+MLU_f0 <- bf(MLU ~ 1)
+
+#Find out what these models are!!
+MLU_f1 <- bf(MLU ~ 0 + Diag)
+
+#Interceot + slope
+MLU_f2 <- bf(MLU ~ 0 + Diag + Diag:Visit)
+
+#Interept + slope and varrying intercept and slope
+MLU_f_3 <- bf(MLU ~ 0 + Diag + Diag:Visit
++ (1 + Visit|ID))
+```
+
+#Making priors and prior predictive check
+```{r}
+#Looking parameters for prior
+get_prior(MLU_f1, 
+          data = d, 
+          family = lognormal)
+
+
+get_prior(MLU_f2,
+          data = d,
+          family = lognormal)
+
+
+get_prior(MLU_f_3,
+          data = d,
+          family = lognormal)
+ 
+
+
+#making priors
+MLU_f1_prior <- c(
+  prior(normal(0.41, 0.41), class=b, coef= "DiagASD"),
+  prior(normal(0.41, 0.22), class=b, coef= "DiagTD"),
+  prior(normal(0, 2), class= sigma)
+)
+
+MLU_f2_prior <- c(
+  prior(normal(0, 0.2), class=b, lb=0), #error and lb=lower boundries
+  prior(normal(0.41, 0.41), class=b, coef= "DiagASD"),
+  prior(normal(0.41, 0.22), class=b, coef= "DiagTD"),
+  prior(normal(0.15, 0.1), class=b, coef= "DiagASD:Visit"),
+  prior(normal(0.2, 0.08), class=b, coef= "DiagTD:Visit"),
+  prior(normal(0, 0.2), class= sigma)
+)
+
+MLU_f3_prior <- c(
+  prior(normal(0, 0.2), class=b, lb=0),
+  prior(normal(0.41, 0.41), class=b, coef= "DiagASD"),
+  prior(normal(0.41, 0.22), class=b, coef= "DiagTD"),
+  prior(normal(0.15, 0.1), class=b, coef= "DiagASD:Visit"),
+  prior(normal(0.2, 0.08), class=b, coef= "DiagTD:Visit"),
+  prior(normal(0, 0.2), class=sd, coef= Intercept, group=ID), #allowing the intercept for each person to varriate with 40% (because of logscale)
+  prior(normal(0, 0.1), class=sd, coef= Visit, group=ID), #slope to varriate with 20% for each person
+  prior(normal(0, 0.2), class= sigma),
+  prior(lkj(1), class= "cor") 
+)
+
+MLU_f1_prior_samp <- 
+  brm(
+    MLU_f1, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f1_prior,  
+    sample_prior = "only", 
+    iter = 2000,
+    warmup = 500,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f1_prior_samp",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+
+MLU_f2_prior_samp <- 
+  brm(
+    MLU_f2, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f2_prior,  
+    sample_prior = "only", 
+    iter = 2000,
+    warmup = 500,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f2_prior_samp",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+
+MLU_f3_prior_sam <- 
+  brm(
+    MLU_f_3, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f3_prior,  
+    sample_prior = "only", 
+    iter = 2000,
+    warmup = 500,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f3_prior_sam",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+
+#pp checking the priors 
+pp_check(MLU_f1_prior_samp, ndraws = 100)
+pp_check(MLU_f2_prior_samp, ndraws = 100)
+pp_check(MLU_f3_prior_sam, ndraws = 100)
+
+```
+
+
+#fitting the models and posterior predictive check
+```{r}
+#Making posteriors
+MLU_f1_prior_posterior <- 
+  brm(
+    MLU_f1, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f1_prior,  
+    sample_prior = T, 
+    iter = 5000,
+    warmup = 1000,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f1_prior_posterior",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+
+MLU_f2_prior_posterior <- 
+  brm(
+    MLU_f2, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f2_prior,  
+    sample_prior = T, 
+    iter = 5000,
+    warmup = 1000,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f2_prior_posterior",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+
+MLU_f3_prior_posterior <- 
+  brm(
+    MLU_f_3, 
+    data = d,
+    family = lognormal,
+    prior = MLU_f3_prior,  
+    sample_prior = T, 
+    iter = 5000,
+    warmup = 1000,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    file = "MLU_f3_prior_posterior",
+    control = list(adapt_delta = 0.99, max_treedepth = 20))
+
+#Checking them
+p1 <- pp_check(MLU_f1_prior_posterior, ndraws = 100)+ggtitle('Model 1')
+p2 <- pp_check(MLU_f2_prior_posterior, ndraws = 100)+ggtitle('Model 2')
+p3 <- pp_check(MLU_f3_prior_posterior, ndraws = 100)+ggtitle('Model 3')
+gridExtra::grid.arrange(p1,p2,p3)
+```
+
+
+#prior-posterior update checks
+```{r}
+
+#getting an overview of the parameters in posterior
+variables(MLU_f1_prior_posterior)
+variables(MLU_f2_prior_posterior)
+variables(MLU_f3_prior_posterior)
+
+#sampling from model and storing it (so we can use it to visualize prior-posterior update check/plot)
+MLU_f1_pp_samp <- as_draws_df(MLU_f1_prior_posterior)
+MLU_f2_pp_samp <- as_draws_df(MLU_f2_prior_posterior)
+MLU_f3_pp_samp <- as_draws_df(MLU_f3_prior_posterior)
+
+
+#################here my knowledge ends. But example of how to make prior-posterior uddate plot, just need the right varriable names
+
+
+
+#Plot the prior-posterior update plot for the intercept:
+ggplot(MLU_f1_pp_samp) +
+  geom_density(aes(prior_Intercept), fill="steelblue", color="black",alpha=0.6) +
+  geom_density(aes(b_Intercept), fill="#FC4E07", color="black",alpha=0.6) + 
+  theme_classic()
+#try coloring by group to see if it works
+
+#Plot the prior-posterior update plot for the sigma:
+ggplot(Posterior_f0) +
+  geom_density(aes(prior_sigma), fill="steelblue", color="black",alpha=0.6) +
+  geom_density(aes(sigma), fill="#FC4E07", color="black",alpha=0.6) + 
+  theme_classic()
+```
+
+```{r}
+plot(conditional_effects(mlu1p1fit), points = T)
+summary(MLU_f1_prior_posterior
+        )
+
+MLU_f1_prior_posterior, ndraws = 100)+ggtitle('Model 1')
+p2 <- pp_check(MLU_f2_prior_posterior, ndraws = 100)+ggtitle('Model 2')
+p3 <- pp_check(MLU_f3_prior_posterior
+
+# model 2
+plot(conditional_effects(mlu2p2fit), points = T)
+summary(MLU_f2_prior_posterior)
+
+#model 3 Parts of the model have not converged (some Rhats are > 1.05). Be careful when analysing the results! We recommend running more iterations and/or setting stronger priors
+plot(conditional_effects(mlu3p3fit), points = T)
+summary(MLU_f3_prior_posterior)
+```
+Family: lognormal 
+  Links: mu = identity; sigma = identity 
+Formula: MLU ~ 0 + Diag 
+   Data: d (Number of observations: 360) 
+  Draws: 2 chains, each with iter = 5000; warmup = 1000; thin = 1;
+         total post-warmup draws = 8000
+
+Population-Level Effects: 
+        Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+DiagASD     0.66      0.04     0.58     0.74 1.00     5972     4445
+DiagTD      0.92      0.04     0.84     1.00 1.00     6013     5009
+
+Family Specific Parameters: 
+      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sigma     0.56      0.02     0.52     0.60 1.00     6055     5151
+
+
+ Family: lognormal 
+  Links: mu = identity; sigma = identity 
+Formula: MLU ~ 0 + Diag + Diag:Visit 
+   Data: d (Number of observations: 360) 
+  Draws: 2 chains, each with iter = 5000; warmup = 1000; thin = 1;
+         total post-warmup draws = 8000
+
+Population-Level Effects: 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+DiagASD           0.16      0.07     0.02     0.31 1.00     2630     1917
+DiagTD            0.27      0.07     0.13     0.41 1.00     3318     2960
+DiagASD:Visit     0.14      0.02     0.10     0.18 1.00     2734     3420
+DiagTD:Visit      0.19      0.02     0.15     0.23 1.00     3348     3146
+
+Family Specific Parameters: 
+      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sigma     0.47      0.02     0.43     0.50 1.00     4684     4391
+
+Family: lognormal 
+  Links: mu = identity; sigma = identity 
+Formula: MLU ~ 0 + Diag + Diag:Visit + (1 + Visit | ID) 
+   Data: d (Number of observations: 360) 
+  Draws: 2 chains, each with iter = 5000; warmup = 1000; thin = 1;
+         total post-warmup draws = 8000
+
+Group-Level Effects: 
+~ID (Number of levels: 60) 
+                     Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)            0.30      0.04     0.23     0.38 1.00     4218     5566
+sd(Visit)                0.10      0.01     0.08     0.13 1.00     1887     3014
+cor(Intercept,Visit)    -0.25      0.15    -0.52     0.07 1.00     1219     2213
+
+Population-Level Effects: 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+DiagASD           0.15      0.06     0.03     0.28 1.00     3467     3257
+DiagTD            0.27      0.06     0.14     0.39 1.00     3840     3813
+DiagASD:Visit     0.15      0.02     0.11     0.18 1.00     2449     3932
+DiagTD:Visit      0.19      0.02     0.16     0.23 1.00     2836     3923
+
+Family Specific Parameters: 
+      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sigma     0.20      0.01     0.19     0.22 1.00     5598     6092
+
+Draws were sampled using sample(hmc). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).
+
+
+
+Draws were sampled using sample(hmc). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).
+
+Draws were sampled using sample(hmc). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).
+
+#Notes for how I understand the process so far
+We are simulating data that we think/are trying to recreate our real data so we can have an idea of how the real data would work and look like when we start analyzing it (so analysing the fake data and hope that it gives an estimate of how the real data would work).
+
+We start by making the models we want to use (and want to find the best one of these models, so we can just use that one model when we get to analyzing the real data). 
+
+Then we make priors based on the values from our simulation and check them - they look pretty wierd, but that's ok I think.
+
+Then we make posteriors based on our priors and simulated data, and check them - they should look much better.
+
+Then we sample from the posterior so we can visualize if our simulated data has learned from our priors, and how well it has learned. 
+I think making a summery would be a good idea, but "testing our hypothesis" by using the hypothesis(), so we can look at the Post.Prob value, that should be as close to 1 as posible. The model with the best Post.Prob value should be the one we use when we analyze the real data, as well as the priors used with that model.
+
+
+
+
+#Hilsen fra Maria
+Håber at det giver ok mening, det er i hvert fald alt hvad jeg selv forstår indtil videre - håber at du får R til at virke! 
+
+
+

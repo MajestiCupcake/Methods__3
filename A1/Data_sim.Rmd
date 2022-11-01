@@ -1,0 +1,71 @@
+---
+title: "lul"
+author: "Sigurd Sørensen"
+date: '2022-09-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(brms)
+```
+
+
+```{r}
+#Could use rlnorm() as this allows floating points but also is positively bound and skewed. 
+rlnorm(10, meanlog = 0.7, sdlog = 0.01) #for the simulation instead of rpois()
+
+
+data_sim <- function(n, mean, beta){
+  df <- tibble(ID = rep(c("Intersection1", "Intersection2"), each = n)) %>% 
+    mutate(Count = ifelse(ID == "Intersection1", rpois(n, lambda = mean), rpois(n, lambda = mean + beta))) %>% 
+    mutate(beta = beta , mean = mean, n = n)
+  
+  return(df)
+}
+
+
+data_sim(n = 10, mean = 10, beta = 5)
+```
+
+
+
+```{r}
+#Map
+n <- c(1:10)
+beta <- c(10:15)
+#Map beta 
+map(.x = beta, .f = data_sim, n = 10, mean = 5)
+#map N
+map(.x = n, .f = data_sim,beta = 10, mean = 5)
+
+#Map2 we can map over several arguments.
+map_list <- tibble(n = seq(from = 50, to =100, length.out = 10), beta = seq(from = 3, to =8, length.out =10) )
+
+map_list
+map2(.x = map_list$n, .y = map_list$beta , data_sim, mean = 5)
+
+?map2
+```
+
+```{r}
+#Map2 we can map over several arguments.
+map_list <- tibble(n = rep(seq(from = 50, to = 100, length.out = 10),10), beta = rep(seq(from = 3, to =8, length.out =10),each  = 10) )
+
+map_list
+map2(.x = map_list$n, .y = map_list$beta , data_sim, mean = 5)
+
+```
+
+
+
+```{r}
+list <- tibble(n = 10:100) %>% 
+  mutate(d = map(n, data_sim, beta = 10, mean = 5))
+list$d
+```
+

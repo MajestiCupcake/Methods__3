@@ -1,0 +1,591 @@
+---
+title: "A1_2"
+author: "Sara"
+date: "2022-10-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('.')
+
+library(tidyverse,
+        ggplot2,
+        gridExtra,
+        bayesplot,
+        brms,
+        dplyr
+        )
+```
+
+# Ændre variables til real data
+
+```{r formula}
+mlu3 <- brms::bf(MLU~0+diagnosis+diagnosis:visit+(1+visit|ID))
+```
+
+```{r data}
+#use simulated from A1
+load(~.RData)
+df1 <- df %>%
+  rename(ID=Child.ID) %>%
+  rename(MLU=CHI_MLU) %>%
+  rename(diagnosis=Diagnosis) %>%
+  rename(visit=Visit)
+# remove MLU=0
+df1[is.na(df1)] = 0
+ df1[df1==0] <- NA
+ df1<-df1[complete.cases(df1$MLU),]
+
+```
+
+```{r prior}
+p3 <-c(
+  prior(normal(0, 0.2), class=b, lb=0),
+  prior(normal(0.41, 0.41), class=b, coef= "diagnosisASD"),
+  prior(normal(0.41, 0.22), class=b, coef= "diagnosisTD"),
+  prior(normal(0.15, 0.1), class=b, coef= "diagnosisASD:visit"),
+  prior(normal(0.2, 0.08), class=b, coef= "diagnosisTD:visit"),
+  prior(normal(0, 0.2), class=sd, coef= Intercept, group=ID), #allowing the intercept for each person to varriate with 40% (because of logscale)
+  prior(normal(0, 0.1), class=sd, coef= visit, group=ID), #slope to varriate with 20% for each person
+  prior(normal(0, 0.2), class= sigma),
+  prior(lkj(1), class= "cor") 
+)
+```
+
+```{r fit prior}
+mlu3p3 <- 
+  brm(
+    formula=mlu3,
+    data=d,
+    family=lognormal,
+    prior=p3,
+    sample_prior="only",
+    iter=2000,
+    warmup=500,
+    backend="cmdstanr",
+    threads=threading(2),
+    cores=2,
+    chains=2,
+    file="mlu3p3",
+    control=list(adapt_delta=0.99,max_treedepth=20)
+  )
+```
+
+```{r pp check}
+rpp3 <- pp_check(mlu3p3, ndraws = 100)+labs(title='Prior Model 3')
+rpp3
+```
+
+```{r posterior}
+mlu3p3real <- 
+  brm(
+    formula=mlu3,
+    data=df2,
+    family=lognormal,
+    prior=p3,
+    sample_prior=T,
+    iter=2000,
+    warmup=500,
+    backend="cmdstanr",
+    threads=threading(2),
+    cores=2,
+    chains=2,
+    file="mlu3p3real",
+    control=list(adapt_delta=0.99,max_treedepth=20)
+  )
+```
+
+```{r pp check}
+rpop3 <- pp_check(mlu3p3, ndraws = 100)+labs(title='Posterior Model 3')
+rpop3
+```
+
+```{r pp update plots}
+pacman::p_load(graphics)
+#Model 3 fitted
+  variables(mlu3p3real)
+  #Sample the parameters of interest:
+  Rosterior_m3 <- as_draws_df(mlu3p3real)
+
+# plots from slides
+  rp1 <- ggplot(Rosterior_m3)+
+    geom_histogram(aes(prior_b_diagnosisASD),
+                   fill='red',
+                   color='red',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(b_diagnosisASD),
+                   fill='green',
+                   color='green',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(b_diagnosisTD),
+                   fill='yellow',
+                   color='yellow',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    ggtitle('Intercept')
+
+  
+  rp2 <- ggplot(Rosterior_m3)+
+    geom_histogram(aes(prior_sd_ID__Intercept),
+                   fill='red',
+                   color='red',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(sd_ID__Intercept),
+                   fill='blue',
+                   color='blue',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    ggtitle('Variability of the intercept')
+  
+    rp4 <- ggplot()+
+    geom_histogram(aes(Rosterior_m3$'prior_b_diagnosisASD:visit'),
+                   fill='red',
+                   color='red',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(Rosterior_m3$'b_diagnosisASD:visit'),
+                   fill='green',
+                   color='green',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(Rosterior_m3$'prior_b_diagnosisTD:visit'),
+                   fill='orange',
+                   color='orange',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(Rosterior_m3$'b_diagnosisTD:visit'),
+                   fill='yellow',
+                   color='yellow',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    ggtitle('Diagnosis:Visit')
+    
+    rp3 <- ggplot(Rosterior_m3)+
+    geom_histogram(aes(prior_sigma),
+                   fill='red',
+                   color='red',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(sigma),
+                   fill='blue',
+                   color='blue',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    ggtitle('Sigma')
+    
+    rp5 <- ggplot(Rosterior_m3)+
+    geom_histogram(aes(prior_sd_ID__visit),
+                   fill='red',
+                   color='red',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    geom_histogram(aes(sd_ID__visit),
+                   fill='blue',
+                   color='blue',
+                   alpha=0.3,
+                   bins=50
+                   )+
+    ggtitle('Variability per visit')
+
+    rp_all <- grid.arrange(rp1,rp2,rp5,rp4,rp3, top='Prior-posterior update check')
+    ggsave('pp_update_m3_real.png',rp_all)
+
+ 
+  #red prior for asd, orange prior for td, posterior asd green, posterior td yellow, posterior both blue
+```
+
+```{r efficient samples}
+plot(conditional_effects(mlu3p3real), points = T)
+summary(mlu3p3real)
+```
+#Problem evidence ration is infinite
+```{r Hypothesis}
+#overall
+hypothesis(mlu3p3real, "diagnosisTD:visit > diagnosisASD:visit") #population level
+hypothesis(mlu3p3real,"diagnosisTD:visit > diagnosisASD:visit",group="ID",scope="coef") #individual levels
+
+
+hypothesis(mlu3p3real, "diagnosisASD:visit < diagnosisTD:visit")
+hypothesis(mlu3p3real, "diagnosisASD < diagnosisTD")
+
+hypothesis(mlu3p3real, "visit<0.03", group = "ID", scope="coef")
+```
+
+
+
+```{r robustness/sensitivity check}
+
+# construct a sequence of sds to loop through for the slope prior:
+priSD <- seq(0.1, 1.5, length.out = 15)
+priorsN <- p3
+#create empty variables to store output of the loop:
+post_pred <- c()
+post_pred_lci <- c()
+post_pred_uci <- c()
+
+for (i in 1:length(priSD)) {
+  # priorsN[2,] <- set_prior(paste0("normal(0, ", priSD[i],")"), class = "b")
+  model_for_loop <- brm(mlu3,
+                                     data   = df2, 
+                                     family = lognormal, 
+                                     prior  = priorsN, 
+                                     sample_prior = T,
+                                     warmup = 1000, 
+                                     iter   = 5000, 
+                                     cores  = 2,
+                                     chains = 2,
+                                     backend = "cmdstanr",
+                                     threads = threading(2),
+                                     save_pars = save_pars(all = TRUE),
+                                     control = list(adapt_delta   = 0.99, 
+                                                    max_treedepth = 15))
+  
+  post_preds <- tidybayes::spread_draws(model_for_loop, b_diagnosisASD:visit)
+  post_pred[i] <- median(post_preds$b_diagnosisASD:visit)
+  post_pred_lci[i] <- quantile(post_preds$b_diagnosisASD:visit, prob = 0.025)
+  post_pred_uci[i] <- quantile(post_predsb_diagnosisASD:visit, prob = 0.975)
+}
+
+models_data_diagasdvis <- tibble(priSD, post_pred, post_pred_lci, post_pred_uci)
+ggplot(data=models_data_diagasdvis, aes(x=priSD, y=post_pred)) +
+  geom_point(size = 3) +
+  geom_pointrange(ymin = post_pred_lci, ymax = post_pred_uci) +
+  ylim(-1.3, 0.3) +
+  labs(x="Standard Deviation of Slope Prior", 
+       y="Posterior Estimate for slope", 
+       title="Sensitivity analysis for constant-effect model for ASD") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, size = 15),
+        axis.title.x = element_text(size = 13),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 13))
+```
+
+# Maria sensitivity
+```{r}
+#sensitivity check ASD the real one (maybe doesn't make sence with uninformed priors..)
+ASD_prior_SD_real <- seq(0.01, 0.15, length.out = 15)
+#My priors
+ASD_priors_real <-c(
+  prior(normal(0, 0.2), class=b, lb=0),
+  prior(normal(0.41, 0.41), class=b, coef= "diagnosisASD"),
+  prior(normal(0.41, 0.22), class=b, coef= "diagnosisTD"),
+  prior(normal(0.15, 0.1), class=b, coef= "diagnosisASD:visit"),
+  prior(normal(0.2, 0.08), class=b, coef= "diagnosisTD:visit"),
+  prior(normal(0, 0.2), class=sd, coef= Intercept, group=ID), #allowing the intercept for each person to varriate with 40% (because of logscale)
+  prior(normal(0, 0.1), class=sd, coef= visit, group=ID), #slope to varriate with 20% for each person
+  prior(normal(0, 0.2), class= sigma),
+  prior(lkj(1), class= "cor") 
+)   
+
+#create empty sets to store output of the loop for ASD:
+real_posterior_prediction_ASD <- c()
+real_posterior_prediction_ASD_lci <- c()
+real_posterior_prediction_ASD_uci <- c()
+
+#Making all the priors we want to check (aka just changing the sd)
+real_sd_priors <- c(
+  prior(normal(0.2, 0.01), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.02), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.03), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.04), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.05), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.06), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.07), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.08), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.09), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.10), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.11), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.12), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.13), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.14), class = b, coef= "diagnosisTD:visit"),
+  prior(normal(0.2, 0.15), class = b, coef= "diagnosisTD:visit")#,
+  # prior(normal(0.2, 0.16), class = b, coef= "diagnosisTD:visit"),
+  # prior(normal(0.2, 0.17), class = b, coef= "diagnosisTD:visit"),
+  # prior(normal(0.2, 0.18), class = b, coef= "diagnosisTD:visit"),
+  # prior(normal(0.2, 0.19), class = b, coef= "diagnosisTD:visit"),
+  # prior(normal(0.2, 0.20), class = b, coef= "diagnosisTD:visit")
+)
+
+#loop through making priors with different sd
+for (i in seq(1, 15)) {
+  ASD_priors_real[4,] <- real_sd_priors[i,] #number 4 for ASD and 5 for TD
+  real_model_for_loop <- brm(
+    mlu3,
+    data= df1,
+    family = lognormal,
+    prior = ASD_priors_real,
+    sample_prior = T,
+    iter = 2000,
+    warmup = 1000,
+    backend = "cmdstanr",
+    threads = threading(2),
+    cores = 2,
+    chains = 2,
+    control = list(adapt_delta = 0.99, max_treedepth = 20)
+  )
+    
+  Model_for_loop_samp_real <- as_draws_df(real_model_for_loop)
+  #posterior_predictions <- spread_draws(model_for_loop, b_DiagASD:Visit) #slope, so b_DiagASD:Visit
+  real_posterior_predictions_ASD <- Model_for_loop_samp_real[,3]
+  real_posterior_prediction_ASD[i] <- median(real_posterior_predictions_ASD$`b_diagnosisTD:visit`)
+  real_posterior_prediction_ASD_lci[i] <- quantile(real_posterior_predictions_ASD$`b_diagnosisTD:visit`, prob = 0.025) #lower boundy for 95% interval
+  real_posterior_prediction_ASD_uci[i] <- quantile(real_posterior_predictions_ASD$`b_diagnosisTD:visit`, prob = 0.975) #upper boundry for 95% interval
+}
+
+
+#Making dataframe from values from loop
+#Error in data.frame(ASD_prior_SD_real, real_posterior_prediction_ASD,  : 
+  #argumenter antyder forskelligt antal rækker: 20, 0
+real_sensitivity_check_TD <- data.frame(ASD_prior_SD_real, real_posterior_prediction_ASD # null
+                                         , real_posterior_prediction_ASD_lci #NA values
+                                         , real_posterior_prediction_ASD_uci) #NA values
+
+
+#visualizing the sensitivity plot
+real_rubostness_check_asd <- ggplot(data=real_sensitivity_check_ASD, aes(x=ASD_prior_SD_real,
+                                                                         y=real_posterior_prediction_ASD)) +
+  geom_point(size = 3) +
+  geom_pointrange(ymin = real_posterior_prediction_ASD_lci, ymax = real_posterior_prediction_ASD_uci) + #pointrange is 95% interval (vertical lines for each dot)
+  ylim(0.001, 0.08) + #range for the slope (y-aksis range)
+  labs(x="Standard Deviation of Slope Prior", 
+       y="Posterior Estimate for Slope", 
+       title="Sensitivity analysis for multi-level model ASD") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, size = 15),
+        axis.title.x = element_text(size = 13),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 13))+
+  ggplot2::geom_abline(intercept=0.04,slope=0,color="#3FFFB6")
+
+
+
+
+ggsave("real_rubostness_check_asd.png", plot=real_rubostness_check_asd,width=12,height=10,units="cm")
+real_rubostness_check_td
+
+```
+
+
+```{r individual effects plots}
+#estimates plot model 3
+temp_re <- ranef(mlu3p3fit)$ID
+for (i in unique(df1$ID)) {
+  temp <-as.character(i)
+  df1$EstimatedIntercept[df1$ID == i] <- temp_re[,,"Intercept"][temp,1]
+  df1$EstimatedIntercept_low[df1$ID == i] <- temp_re[,,"Intercept"][temp,3]
+  df1$EstimatedIntercept_high[df1$ID == i] <- temp_re[,,"Intercept"][temp,4]
+  df1$EstimatedSlope[df1$ID == i] <- temp_re[,,"visit"][temp,1]
+  df1$EstimatedSlope_low[df1$ID == i] <- temp_re[,,"visit"][temp,3]
+  df1$EstimatedSlope_high[df1$ID == i] <- temp_re[,,"visit"][temp,4]
+}
+
+df11 <- df1 %>% subset(visit==1) %>% 
+  mutate(
+    EstimatedIntercept = ifelse(diagnosis=="ASD",
+                                EstimatedIntercept + 0.16,
+                                EstimatedIntercept + 0.27),
+    EstimatedIntercept_low = ifelse(diagnosis=="ASD",
+                                EstimatedIntercept_low + 0.16,
+                                EstimatedIntercept_low + 0.27),
+    EstimatedIntercept_high = ifelse(diagnsosi=="ASD",
+                                EstimatedIntercept_high + 0.16,
+                                EstimatedIntercept_high + 0.27),
+    
+    
+    EstimatedSlope = ifelse(diagnosis=="ASD",
+                                EstimatedSlope + 0.14,
+                                EstimatedSlope + 0.19),
+    EstimatedSlope_low = ifelse(diagnosis=="ASD",
+                                EstimatedSlope_low + 0.14,
+                                EstimatedSlope_low + 0.19),
+    EstimatedSlope_high = ifelse(diagnosis=="ASD",
+                                EstimatedSlope_high + 0.14,
+                                EstimatedSlope_high + 0.19)
+    
+  )
+
+
+
+Estimated_intercept <- ggplot(df11)+
+  geom_pointrange(aes(x=as.numeric(as.factor(ID)),y=EstimatedIntercept,
+                      ymin=EstimatedIntercept_low,ymax=EstimatedIntercept_high,
+                      color = diagnosis),alpha=0.3) +
+  geom_point(aes(x=as.numeric(as.factor(ID)),y=IndividualIntercept))+
+  xlab("Precision of estimates by child")+
+  ylab("Estimated intercept")
+
+
+Estimated_slope <- ggplot(df11)+
+  geom_pointrange(aes(x=as.numeric(as.factor(ID)),y=EstimatedSlope,
+                      ymin=EstimatedSlope_low,ymax=EstimatedSlope_high,
+                      color = diagnosis),alpha=0.3) +
+  geom_point(aes(x=as.numeric(as.factor(ID)),y=IndividualSlope))+
+  xlab("Precision of estimates by child")+
+  ylab("Estimated slope")
+
+Estimates_plot <- grid.arrange(Estimated_intercept, Estimated_slope)
+
+ggsave("estimates_plot.pdf", Estimates_plot)
+Estimates_plot
+```
+
+
+## Evt.
+```{r Pooling}
+plot_df <- tibble(
+  Subject = rownames(coef(mlu3p3real)[["ID"]][,,"Intercept"]),
+  ASD = coef(mlu3p3real)[["ID"]][,,"diagnosisASD"][,1],
+  TD = ASD + coef(mlu3p3real)[["ID"]][,,"diagnosisTD"][,1],
+  Type = "partial pooling"
+) %>% pivot_longer(ASD:TD) %>% dplyr::rename(
+  Register = name,
+  ArticulationS = value
+)
+df <- df2[, c("ID", "diagnosis", "MLU")] %>%
+  mutate(Type = "no pooling")
+pool_df <- df[,c("Subject", "Register")] %>%
+  mutate(
+    ArticulationS = ifelse(Register=="ASD", mean(df$ArticulationS[df$Register=="ASD"]), mean(df$ArticulationS[df$Register=="TD"])),
+    Type = "total pooling"
+  )
+
+plot_df <- rbind(plot_df,df) 
+
+plot_df <- rbind(plot_df,pool_df) 
+
+plot_df <- plot_df %>%
+  mutate(Register=as.numeric(as.factor(Register)))
+
+ggplot(plot_df, aes(Register, ArticulationS, color = Type)) + 
+  geom_path(size = 1) + 
+  geom_point() + 
+  facet_wrap(.~Subject) +
+  scale_x_continuous(breaks=seq(1, 2, 1)) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 13),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 13),
+        strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"),
+        strip.text.x = element_text(size = 10, color = "black"))
+
+### Now the ellipsis plot
+## Partial pooling
+df_partial <- tibble(
+  Subject = rownames(coef(Articulation_m3)[["Subject"]][,,"Intercept"]),
+  ADS = coef(Articulation_m3)[["Subject"]][,,"Intercept"][,1],
+  RegisterIDS = coef(Articulation_m3)[["Subject"]][,,"RegisterIDS"][,1],
+  Type = "Partial pooling"
+)
+## Original data
+df_no <- NULL
+for (s in unique(d$Subject)){
+  tmp <- tibble(
+    Subject = s,
+    ADS = d$ArticulationS[d$Register=="ADS" & d$Subject==s],
+    RegisterIDS = d$ArticulationS[d$Register=="IDS" & d$Subject==s] - d$ArticulationS[d$Register=="ADS" & d$Subject==s],
+    Type = "No pooling"
+  )
+  if (exists("df_no")){df_no = rbind(df_no, tmp)} else {df_no = tmp}
+}
+df_total <- df_no[,c("Subject")] %>%
+  mutate(
+    ADS = mean(d$ArticulationS[d$Register=="ADS"]),
+    RegisterIDS =  mean(d$ArticulationS[d$Register=="IDS"]) - mean(d$ArticulationS[d$Register=="ADS"]),
+    Type = "Total pooling"
+  )
+df_fixef <- tibble(
+  Type = "Partial pooling (average)",
+  ADS = fixef(Articulation_m3)[1],
+  RegisterIDS = fixef(Articulation_m3)[2]
+)
+
+# Complete pooling / fixed effects are center of gravity in the plot
+df_gravity <- df_total %>% 
+  distinct(Type, ADS, RegisterIDS) %>% 
+  bind_rows(df_fixef)
+
+df_pulled <- bind_rows(df_no, df_partial)
+
+# Extract the variance covariance matrix
+cov_mat_t <- VarCorr(Articulation_m3)[["Subject"]]$cov
+cov_mat <- matrix(nrow=2, ncol=2)
+cov_mat[1,1]<-cov_mat_t[,,"Intercept"][1,1]
+cov_mat[2,1]<-cov_mat_t[,,"RegisterIDS"][1,1]
+cov_mat[1,2]<-cov_mat_t[,,"Intercept"][2,1]
+cov_mat[2,2]<-cov_mat_t[,,"RegisterIDS"][2,1]
+
+make_ellipse <- function(cov_mat, center, level) {
+  ellipse(cov_mat, centre = center, level = level) %>%
+    as.data.frame() %>%
+    add_column(level = level) %>% 
+    as_tibble()
+}
+center <- fixef(Articulation_m3)
+levels <- c(.1, .3, .5, .7, .9)
+
+# Create an ellipse dataframe for each of the levels defined 
+# above and combine them
+df_ellipse <- levels %>%
+  purrr::map_df(~ make_ellipse(cov_mat, center, level = .x)) %>% 
+  dplyr::rename(ADS = x, RegisterIDS = y)
+
+Gaussian_ellipsis <- ggplot(df_pulled) + 
+  aes(x = ADS, y = RegisterIDS, color = Type) + 
+  # Draw contour lines from the distribution of effects
+  geom_path(
+    aes(group = level, color = NULL), 
+    data = df_ellipse, 
+    linetype = "dashed", 
+    color = "grey40"
+  ) + 
+  geom_point(data = df_gravity, size = 5) + 
+  geom_point(size = 2) + 
+  geom_path(
+    aes(group = Subject, color = NULL), 
+    arrow = arrow(length = unit(.02, "npc"))
+  ) + 
+  # Use ggrepel to jitter the labels away from the points
+  ggrepel::geom_text_repel(
+    aes(label = Subject, color = NULL), 
+    data = df_no
+  ) + 
+  # Don't forget 373
+  ggrepel::geom_text_repel(
+    aes(label = Subject, color = NULL), 
+    data = df_partial
+  ) + 
+  ggtitle("Topographic map of regression parameters") + 
+  xlab("Intercept estimate") + 
+  ylab("Slope estimate") + 
+  scale_color_brewer(palette = "Dark2") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 15),
+        legend.position = "bottom",
+        axis.title.x = element_text(size = 13),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 13),
+        strip.background = element_rect(color="white", fill="white", size=1.5, linetype="solid"))
+
+Gaussian_ellipsis
+```
